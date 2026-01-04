@@ -2,10 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import {
-  decrypt,
-  deriveKey,
-} from '@signatureops/shared/encryption';
+import { testConnection } from '@/lib/google/client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,9 +11,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const tenantId = session.user.tenantId;
+
     // Get workspace connection
     const connection = await prisma.workspaceConnection.findUnique({
-      where: { tenantId: session.user.tenantId },
+      where: { tenantId },
     });
 
     if (!connection) {
@@ -26,46 +25,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if mock mode
-    const mockMode = process.env.MOCK_GOOGLE_MODE === 'true';
+    // Get admin email for impersonation
+    const adminUser = await prisma.adminUser.findUnique({
+      where: { id: session.user.id },
+    });
 
-    if (mockMode) {
-      // Return mock users
-      const mockUsers = [
-        { name: 'John Doe', email: 'john.doe@example.com' },
-        { name: 'Jane Smith', email: 'jane.smith@example.com' },
-        { name: 'Bob Wilson', email: 'bob.wilson@example.com' },
-        { name: 'Alice Johnson', email: 'alice.johnson@example.com' },
-        { name: 'Charlie Brown', email: 'charlie.brown@example.com' },
-      ];
-
-      return NextResponse.json({ success: true, users: mockUsers });
-    }
-
-    // Decrypt credentials
-    const masterSecret = process.env.ENCRYPTION_MASTER_SECRET;
-    if (!masterSecret) {
+    if (!adminUser) {
       return NextResponse.json(
-        { error: 'Server configuration error' },
-        { status: 500 }
+        { error: 'Admin user not found' },
+        { status: 400 }
       );
     }
 
-    // For real implementation, we would:
-    // 1. Decrypt the credentials
-    // 2. Create a JWT for impersonation
-    // 3. Call the Google Directory API
-    // 4. Return the first 5 users
+    // Test connection
+    const result = await testConnection(tenantId, adminUser.email);
 
-    // For now, return an error since real Google API is not implemented yet
-    return NextResponse.json(
-      { error: 'Real Google API integration not implemented. Enable MOCK_GOOGLE_MODE for testing.' },
-      { status: 501 }
-    );
-  } catch (error) {
+    if (result.success) {
+      return NextResponse.json({
+        success: true,
+        users: result.users?.map((u) => ({
+          name: u.name.fullName,
+          email: u.primaryEmail,
+        })),
+      });
+    } else {
+      return NextResponse.json(
+        { error: result.error || 'Connection test failed' },
+        { status: 400 }
+      );
+    }
+  } catch (error: any) {
     console.error('Test connection error:', error);
     return NextResponse.json(
-      { error: 'Failed to test connection. Please check your credentials.' },
+      { error: error.message || 'Failed to test connection' },
       { status: 500 }
     );
   }
