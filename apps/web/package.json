@@ -1,0 +1,49 @@
+{
+  "name": "@signatureops/web",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "@signatureops/shared": "workspace:*",
+    "next": "14.2.21",
+    "next-auth": "^4.24.11",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "googleapis": "^144.0.0",
+    "sanitize-html": "^2.14.0",
+    "stripe": "^17.5.0",
+    "uuid": "^11.0.3",
+    "zod": "^3.24.1",
+    "@aws-sdk/client-s3": "^3.713.0",
+    "@aws-sdk/s3-request-presigner": "^3.713.0",
+    "pino": "^9.6.0",
+    "pino-http": "^10.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.17",
+    "@types/react-dom": "^18.3.5",
+    "@types/sanitize-html": "^2.13.0",
+    "@types/uuid": "^10.0.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.21",
+    "postcss": "^8.4.49",
+    "prisma": "^5.22.0",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.3.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,122 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: signatureops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: signatureops
+      POSTGRES_PASSWORD: signatureops_dev_password
+      POSTGRES_DB: signatureops
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U signatureops -d signatureops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: signatureops-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: signatureops-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 minioadmin minioadmin123;
+      mc mb myminio/signatureops-assets --ignore-existing;
+      mc anonymous set download myminio/signatureops-assets;
+      echo 'MinIO bucket created successfully';
+      "
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: signatureops-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://signatureops:signatureops_dev_password@postgres:5432/signatureops
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: dev-secret-change-in-production-minimum-32-chars
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-your-google-client-id}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-your-google-client-secret}
+      ENCRYPTION_MASTER_SECRET: dev-encryption-secret-change-in-production-32chars
+      ENCRYPTION_KEY_ID: key_dev_001
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin123
+      S3_BUCKET: signatureops-assets
+      S3_REGION: us-east-1
+      S3_PUBLIC_URL: http://localhost:9000/signatureops-assets
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_placeholder}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
+      STRIPE_PRICE_ID: ${STRIPE_PRICE_ID:-price_placeholder}
+      MOCK_GOOGLE_MODE: "true"
+      LOG_LEVEL: debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./apps/web:/app/apps/web:cached
+      - ./packages/shared:/app/packages/shared:cached
+      - web_node_modules:/app/apps/web/node_modules
+      - shared_node_modules:/app/packages/shared/node_modules
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    container_name: signatureops-worker
+    restart: unless-stopped
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://signatureops:signatureops_dev_password@postgres:5432/signatureops
+      ENCRYPTION_MASTER_SECRET: dev-encryption-secret-change-in-production-32chars
+      ENCRYPTION_KEY_ID: key_dev_001
+      MOCK_GOOGLE_MODE: "true"
+      LOG_LEVEL: debug
+    depends_on:
+      postgres:
+        condition: service_healthy
+      web:
+        condition: service_started
+    volumes:
+      - ./apps/worker:/app/apps/worker:cached
+      - ./packages/shared:/app/packages/shared:cached
+      - worker_node_modules:/app/apps/worker/node_modules
+
+volumes:
+  postgres_data:
+  minio_data:
+  web_node_modules:
+  worker_node_modules:
+  shared_node_modules:

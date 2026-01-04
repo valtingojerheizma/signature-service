@@ -1,0 +1,385 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// TENANT & AUTH
+// ============================================================================
+
+model Tenant {
+  id              String   @id @default(cuid())
+  domain          String   @unique
+  name            String
+  setupComplete   Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  adminUsers           AdminUser[]
+  workspaceConnection  WorkspaceConnection?
+  employees            Employee[]
+  templates            Template[]
+  assignmentRules      AssignmentRule[]
+  deploymentRuns       DeploymentRun[]
+  auditLogs            AuditLog[]
+  billingAccount       BillingAccount?
+
+  @@index([domain])
+}
+
+model AdminUser {
+  id          String    @id @default(cuid())
+  email       String    @unique
+  name        String?
+  googleId    String?
+  avatarUrl   String?
+  role        AdminRole @default(ADMIN)
+  tenantId    String?
+  lastLoginAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  tenant    Tenant?    @relation(fields: [tenantId], references: [id], onDelete: SetNull)
+  auditLogs AuditLog[]
+
+  @@index([tenantId])
+  @@index([email])
+}
+
+enum AdminRole {
+  OWNER
+  ADMIN
+}
+
+// ============================================================================
+// GOOGLE WORKSPACE CONNECTION
+// ============================================================================
+
+model WorkspaceConnection {
+  id                     String   @id @default(cuid())
+  tenantId               String   @unique
+  serviceAccountEmail    String
+  // Encrypted service account JSON (AES-256-GCM)
+  encryptedCredentials   String   @db.Text
+  encryptionKeyId        String   // For key rotation tracking
+  encryptionIv           String   // IV for AES-GCM
+  encryptionAuthTag      String   // Auth tag for AES-GCM
+  lastSyncAt             DateTime?
+  lastSyncStatus         SyncStatus?
+  lastSyncError          String?
+  userCount              Int      @default(0)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+enum SyncStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+// ============================================================================
+// EMPLOYEE (synced from Google Directory)
+// ============================================================================
+
+model Employee {
+  id               String    @id @default(cuid())
+  tenantId         String
+  googleId         String    // Google user ID
+  primaryEmail     String
+  fullName         String
+  givenName        String?
+  familyName       String?
+  title            String?
+  department       String?
+  orgUnitPath      String    @default("/")
+  phone            String?
+  mobilePhone      String?
+  location         String?
+  thumbnailUrl     String?
+  suspended        Boolean   @default(false)
+
+  // Signature deployment tracking
+  lastDeployedAt       DateTime?
+  lastDeployedHash     String?   // Hash of last deployed signature
+  currentSignatureHash String?   // Hash of current intended signature
+
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // Relations
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignmentOverride AssignmentRule?    @relation("UserOverride")
+  deploymentResults  DeploymentResult[]
+
+  @@unique([tenantId, googleId])
+  @@unique([tenantId, primaryEmail])
+  @@index([tenantId])
+  @@index([orgUnitPath])
+}
+
+// ============================================================================
+// TEMPLATES
+// ============================================================================
+
+model Template {
+  id           String         @id @default(cuid())
+  tenantId     String
+  name         String
+  description  String?
+  htmlContent  String         @db.Text
+  plainText    String?        @db.Text  // Auto-generated plain text version
+  isDefault    Boolean        @default(false)
+  isActive     Boolean        @default(true)
+  version      Int            @default(1)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  // Relations
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignmentRules AssignmentRule[]
+  assets          TemplateAsset[]
+
+  @@index([tenantId])
+  @@index([isDefault, tenantId])
+}
+
+model TemplateAsset {
+  id          String   @id @default(cuid())
+  templateId  String
+  filename    String
+  mimeType    String
+  s3Key       String
+  s3Bucket    String
+  size        Int
+  url         String   // Public URL or presigned URL
+  createdAt   DateTime @default(now())
+
+  // Relations
+  template Template @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@index([templateId])
+}
+
+// ============================================================================
+// ASSIGNMENT RULES
+// ============================================================================
+
+model AssignmentRule {
+  id          String         @id @default(cuid())
+  tenantId    String
+  templateId  String
+  type        RuleType
+  priority    Int            @default(0)  // Higher = more specific
+
+  // For ORG_UNIT rules
+  orgUnitPath String?
+
+  // For USER_OVERRIDE rules
+  employeeId  String?        @unique
+
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  // Relations
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  template  Template  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  employee  Employee? @relation("UserOverride", fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([type, tenantId])
+  @@index([orgUnitPath, tenantId])
+}
+
+enum RuleType {
+  TENANT_DEFAULT
+  ORG_UNIT
+  USER_OVERRIDE
+  // GROUP - reserved for future use
+}
+
+// ============================================================================
+// DEPLOYMENT
+// ============================================================================
+
+model DeploymentRun {
+  id                String           @id @default(cuid())
+  tenantId          String
+  status            DeploymentStatus @default(PENDING)
+  overwriteStrategy OverwriteStrategy @default(ALWAYS)
+
+  // Stats
+  totalUsers        Int              @default(0)
+  successCount      Int              @default(0)
+  failureCount      Int              @default(0)
+  skippedCount      Int              @default(0)
+
+  triggeredBy       String           // AdminUser ID
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  // Relations
+  tenant  Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  results DeploymentResult[]
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+enum DeploymentStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum OverwriteStrategy {
+  ALWAYS              // Always overwrite signature
+  DRIFT_SAFE          // Only overwrite if matches last deployed hash
+}
+
+model DeploymentResult {
+  id              String       @id @default(cuid())
+  deploymentRunId String
+  employeeId      String
+  status          ResultStatus
+  signatureHash   String?      // Hash of deployed signature
+  errorMessage    String?
+  retriesUsed     Int          @default(0)
+  processedAt     DateTime     @default(now())
+
+  // Relations
+  deploymentRun DeploymentRun @relation(fields: [deploymentRunId], references: [id], onDelete: Cascade)
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([deploymentRunId])
+  @@index([employeeId])
+  @@index([status])
+}
+
+enum ResultStatus {
+  SUCCESS
+  FAILED
+  SKIPPED  // Skipped due to drift-safe strategy
+}
+
+// ============================================================================
+// AUDIT LOG
+// ============================================================================
+
+model AuditLog {
+  id           String      @id @default(cuid())
+  tenantId     String
+  adminUserId  String?
+  action       AuditAction
+  entityType   String      // Template, AssignmentRule, DeploymentRun, etc.
+  entityId     String?
+  description  String
+  metadata     Json?       // Additional context
+  ipAddress    String?
+  userAgent    String?
+  createdAt    DateTime    @default(now())
+
+  // Relations
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  adminUser AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([adminUserId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+enum AuditAction {
+  // Auth
+  USER_LOGIN
+  USER_LOGOUT
+
+  // Tenant
+  TENANT_CREATED
+  TENANT_UPDATED
+
+  // Workspace
+  WORKSPACE_CONNECTED
+  WORKSPACE_UPDATED
+  DIRECTORY_SYNCED
+
+  // Templates
+  TEMPLATE_CREATED
+  TEMPLATE_UPDATED
+  TEMPLATE_DELETED
+  TEMPLATE_ASSET_UPLOADED
+
+  // Rules
+  RULE_CREATED
+  RULE_UPDATED
+  RULE_DELETED
+
+  // Deployment
+  DEPLOYMENT_STARTED
+  DEPLOYMENT_COMPLETED
+  DEPLOYMENT_FAILED
+
+  // Billing
+  SUBSCRIPTION_CREATED
+  SUBSCRIPTION_UPDATED
+  SUBSCRIPTION_CANCELLED
+}
+
+// ============================================================================
+// BILLING
+// ============================================================================
+
+model BillingAccount {
+  id                    String        @id @default(cuid())
+  tenantId              String        @unique
+  stripeCustomerId      String?       @unique
+  stripeSubscriptionId  String?       @unique
+
+  plan                  BillingPlan   @default(TRIAL)
+  status                BillingStatus @default(ACTIVE)
+
+  // Trial info
+  trialEndsAt           DateTime?
+
+  // Subscription info
+  currentPeriodStart    DateTime?
+  currentPeriodEnd      DateTime?
+
+  // Usage tracking
+  activeUserCount       Int           @default(0)
+
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([stripeCustomerId])
+  @@index([status])
+}
+
+enum BillingPlan {
+  TRIAL
+  PRO
+}
+
+enum BillingStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+  EXPIRED
+}

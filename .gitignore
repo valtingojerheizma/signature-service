@@ -1,0 +1,51 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build output
+dist
+.next
+out
+build
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing
+coverage
+.nyc_output
+
+# Prisma
+apps/web/prisma/migrations/*.sql.backup
+
+# Generated
+*.tsbuildinfo
+.turbo
+
+# Docker volumes (local)
+postgres_data
+minio_data
+
+# Credentials (never commit!)
+*.pem
+*.key
+*-credentials.json
+service-account*.json

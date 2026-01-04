@@ -1,0 +1,22 @@
+{
+  "name": "signatureops",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "pnpm run --parallel dev",
+    "build": "pnpm run --filter @signatureops/web build && pnpm run --filter @signatureops/worker build",
+    "lint": "pnpm run --parallel lint",
+    "test": "pnpm run --parallel test",
+    "db:generate": "pnpm run --filter @signatureops/web db:generate",
+    "db:migrate": "pnpm run --filter @signatureops/web db:migrate",
+    "db:push": "pnpm run --filter @signatureops/web db:push",
+    "db:studio": "pnpm run --filter @signatureops/web db:studio",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}
